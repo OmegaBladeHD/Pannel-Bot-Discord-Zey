@@ -123,6 +123,51 @@ def save_users(users):
     except Exception as e:
         logger.error(f"Error saving users: {str(e)}")
 
+def get_platform_example(platform):
+    """Return an example username for each platform"""
+    examples = {
+        "twitch": "pokimane",
+        "youtube": "MrBeast",
+        "tiktok": "charlidamelio"
+    }
+    return examples.get(platform, "username")
+
+def get_platform_placeholder(platform):
+    """Return placeholder text for each platform's notification message"""
+    placeholders = {
+        "twitch": "Utilisez {user} pour le nom, {game} pour le jeu, {title} pour le titre et {link} pour le lien",
+        "youtube": "Utilisez {user} pour le nom, {title} pour le titre et {link} pour le lien",
+        "tiktok": "Utilisez {user} pour le nom et {link} pour le lien"
+    }
+    return placeholders.get(platform, "Message de notification personnalisé")
+
+def get_platform_default_message(platform):
+    """Return default notification message for each platform"""
+    defaults = {
+        "twitch": "{user} est en live sur {game} ! Titre: {title}\n{link}",
+        "youtube": "{user} vient de sortir une nouvelle vidéo YouTube : {title}\n{link}",
+        "tiktok": "{user} a posté un nouveau TikTok !\n{link}"
+    }
+    return defaults.get(platform, "{user} a posté du nouveau contenu! {link}")
+
+def get_platform_color(platform):
+    """Return color for each platform's embeds"""
+    colors = {
+        "twitch": 0x9146FF,  # Purple
+        "youtube": 0xFF0000,  # Red
+        "tiktok": 0x000000,   # Black
+    }
+    return colors.get(platform, 0x3498db)  # Default blue
+    
+def get_platform_emoji(platform):
+    """Return emoji for each platform"""
+    emojis = {
+        "twitch": "💜",
+        "youtube": "📺",
+        "tiktok": "📱",
+    }
+    return emojis.get(platform, "🔔")
+
 def get_user_data(user_id):
     """Get user data or create if not exists"""
     users = load_users()
@@ -510,30 +555,167 @@ async def config_command(interaction: discord.Interaction, platform: str):
     
     config = load_config()
     
-    if platform not in config or not config[platform]:
-        await interaction.response.send_message(f"Aucun créateur configuré pour {platform}.", ephemeral=True)
-        return
+    if platform not in config:
+        config[platform] = {}
+        save_config(config)
     
-    # Create buttons for each creator
-    creators = list(config[platform].keys())
+    # Create embed for platform configuration
+    embed = discord.Embed(
+        title=f"Configuration de {platform.capitalize()}",
+        description=f"Gérez les créateurs {platform} et leurs notifications",
+        color=get_platform_color(platform)
+    )
     
-    class CreatorSelect(discord.ui.Select):
-        def __init__(self, creators_list):
-            options = [discord.SelectOption(label=creator, value=creator) for creator in creators_list]
-            super().__init__(placeholder="Choisir un créateur...", min_values=1, max_values=1, options=options)
-        
-        async def callback(self, interaction: discord.Interaction):
-            creator = self.values[0]
-            await show_creator_config(interaction, platform, creator)
+    emoji = get_platform_emoji(platform)
     
-    class CreatorSelectView(discord.ui.View):
+    if config[platform]:
+        creators_list = "\n".join([f"• **{creator}** ({'✅ Activé' if settings['enabled'] else '❌ Désactivé'})" 
+                                  for creator, settings in config[platform].items()])
+        embed.add_field(
+            name=f"{emoji} Créateurs configurés",
+            value=creators_list or "Aucun créateur configuré",
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name=f"{emoji} Créateurs configurés",
+            value="Aucun créateur configuré pour cette plateforme.",
+            inline=False
+        )
+    
+    embed.add_field(
+        name="🔧 Options",
+        value="Utilisez les boutons ci-dessous pour gérer les créateurs et leurs notifications.",
+        inline=False
+    )
+    
+    # Create buttons for creator management
+    class ConfigView(discord.ui.View):
         def __init__(self):
-            super().__init__()
-            self.add_item(CreatorSelect(creators))
+            super().__init__(timeout=300)
+        
+        @discord.ui.button(label="Gérer les créateurs", style=discord.ButtonStyle.primary, emoji="⚙️")
+        async def manage_creators(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if not config[platform]:
+                await interaction.response.send_message(
+                    embed=discord.Embed(
+                        title="❌ Aucun créateur",
+                        description=f"Aucun créateur configuré pour {platform}. Ajoutez-en un d'abord avec le bouton \"Ajouter un créateur\".",
+                        color=discord.Color.red()
+                    ),
+                    ephemeral=True
+                )
+                return
+                
+            # Create select menu for each creator
+            creators = list(config[platform].keys())
+            
+            class CreatorSelect(discord.ui.Select):
+                def __init__(self, creators_list):
+                    options = [discord.SelectOption(
+                        label=creator, 
+                        value=creator,
+                        description=f"Configurer les notifications pour {creator}",
+                        emoji="✅" if config[platform][creator]["enabled"] else "❌"
+                    ) for creator in creators_list]
+                    
+                    super().__init__(
+                        placeholder=f"Choisir un créateur {platform}...", 
+                        min_values=1, 
+                        max_values=1, 
+                        options=options
+                    )
+                
+                async def callback(self, interaction: discord.Interaction):
+                    creator = self.values[0]
+                    await show_creator_config(interaction, platform, creator)
+            
+            class CreatorSelectView(discord.ui.View):
+                def __init__(self):
+                    super().__init__(timeout=180)
+                    self.add_item(CreatorSelect(creators))
+            
+            embed = discord.Embed(
+                title=f"Sélection d'un créateur {platform}",
+                description="Choisissez un créateur dans la liste déroulante ci-dessous pour configurer ses notifications.",
+                color=get_platform_color(platform)
+            )
+            
+            await interaction.response.send_message(
+                embed=embed,
+                view=CreatorSelectView(),
+                ephemeral=True
+            )
+            
+        @discord.ui.button(label="Ajouter un créateur", style=discord.ButtonStyle.success, emoji="➕")
+        async def add_creator(self, interaction: discord.Interaction, button: discord.ui.Button):
+            # Show modal to input creator details
+            await interaction.response.send_modal(AddCreatorModal(platform))
+    
+    class AddCreatorModal(discord.ui.Modal):
+        def __init__(self, platform):
+            super().__init__(title=f"Ajouter un créateur {platform}")
+            self.platform = platform
+            
+            self.creator_name = discord.ui.TextInput(
+                label=f"Nom d'utilisateur {platform}",
+                placeholder=f"Exemple: {get_platform_example(platform)}",
+                required=True
+            )
+            self.add_item(self.creator_name)
+            
+            self.custom_message = discord.ui.TextInput(
+                label="Message de notification",
+                placeholder=get_platform_placeholder(platform),
+                style=discord.TextStyle.paragraph,
+                default=get_platform_default_message(platform),
+                required=True
+            )
+            self.add_item(self.custom_message)
+        
+        async def on_submit(self, interaction: discord.Interaction):
+            creator = self.creator_name.value.strip()
+            
+            # Check if creator already exists
+            if creator in config[self.platform]:
+                await interaction.response.send_message(
+                    embed=discord.Embed(
+                        title="❌ Créateur existant",
+                        description=f"Le créateur **{creator}** existe déjà pour {self.platform}.",
+                        color=discord.Color.red()
+                    ),
+                    ephemeral=True
+                )
+                return
+            
+            # Add creator to config
+            config[self.platform][creator] = {
+                "enabled": True,
+                "message": self.custom_message.value,
+                "channel_id": None,
+                "ping": ""
+            }
+            save_config(config)
+            
+            success_embed = discord.Embed(
+                title="✅ Créateur ajouté avec succès",
+                description=f"Le créateur **{creator}** a été ajouté à vos notifications {self.platform}.",
+                color=discord.Color.green()
+            )
+            success_embed.add_field(
+                name="Étapes suivantes",
+                value=f"Utilisez `/config {self.platform}` puis \"Gérer les créateurs\" pour configurer le salon et les mentions.",
+                inline=False
+            )
+            
+            await interaction.response.send_message(
+                embed=success_embed,
+                ephemeral=True
+            )
     
     await interaction.response.send_message(
-        f"Choisissez un créateur {platform} à configurer :",
-        view=CreatorSelectView(),
+        embed=embed,
+        view=ConfigView(),
         ephemeral=True
     )
 
@@ -542,88 +724,377 @@ async def show_creator_config(interaction: discord.Interaction, platform: str, c
     config = load_config()
     creator_config = config[platform][creator]
     
+    # Create a detailed embed with platform-specific styling
     embed = discord.Embed(
-        title=f"Configuration de {creator} ({platform})",
-        description="Utilisez les boutons ci-dessous pour configurer les notifications.",
-        color=0x3498db
+        title=f"Configuration de {creator}",
+        description=f"Personnalisez les notifications pour ce créateur {platform}",
+        color=get_platform_color(platform)
     )
     
-    embed.add_field(name="Status", value="Activé" if creator_config["enabled"] else "Désactivé", inline=True)
-    embed.add_field(name="Salon", value=f"<#{creator_config['channel_id']}>" if creator_config["channel_id"] else "Non configuré", inline=True)
-    embed.add_field(name="Ping", value=creator_config["ping"] if creator_config["ping"] else "Aucun", inline=True)
-    embed.add_field(name="Message", value=creator_config["message"], inline=False)
+    # Status indicator with emoji
+    status_emoji = "✅" if creator_config["enabled"] else "❌"
+    embed.add_field(
+        name="📊 Statut", 
+        value=f"{status_emoji} **{('Activé' if creator_config['enabled'] else 'Désactivé')}**", 
+        inline=True
+    )
+    
+    # Channel display with emoji
+    channel_value = f"<#{creator_config['channel_id']}>" if creator_config["channel_id"] else "**Non configuré**"
+    embed.add_field(
+        name="📢 Salon", 
+        value=channel_value, 
+        inline=True
+    )
+    
+    # Ping settings with emoji
+    ping_value = f"**{creator_config['ping']}**" if creator_config["ping"] else "**Aucun ping**"
+    embed.add_field(
+        name="🔔 Notification", 
+        value=ping_value, 
+        inline=True
+    )
+    
+    # Message preview with formatting
+    placeholder_message = creator_config["message"]
+    
+    # Create example values based on platform
+    example_values = {
+        "user": creator,
+        "link": f"https://{platform}.com/{creator}",
+    }
+    
+    if platform == "twitch":
+        example_values["game"] = "Fortnite"
+        example_values["title"] = "Gameplay avec les viewers !"
+    elif platform == "youtube":
+        example_values["title"] = "Ma nouvelle vidéo incroyable"
+    
+    # Replace placeholders with example values for preview
+    preview_message = placeholder_message
+    for key, value in example_values.items():
+        preview_message = preview_message.replace(f"{{{key}}}", value)
+    
+    embed.add_field(
+        name="💬 Format du message", 
+        value=f"```\n{creator_config['message']}\n```", 
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔍 Aperçu", 
+        value=preview_message, 
+        inline=False
+    )
+    
+    # Add footer with platform emoji
+    embed.set_footer(
+        text=f"Créateur {platform} • Cliquez sur les boutons ci-dessous pour modifier",
+        icon_url="https://cdn.discordapp.com/emojis/1012074883568758835.png?v=1" # Discord logo
+    )
+    
+    # Add thumbnail based on platform
+    if platform == "twitch":
+        embed.set_thumbnail(url="https://brand.twitch.tv/assets/logos/svg/glitch/purple.svg")
+    elif platform == "youtube":
+        embed.set_thumbnail(url="https://www.youtube.com/s/desktop/b182fc95/img/favicon_144x144.png")
+    elif platform == "tiktok":
+        embed.set_thumbnail(url="https://sf16-scmcdn-sg.ibytedtos.com/goofy/tiktok/web/node/_next/static/images/logo-big-edd8395913a7d4b3b8b93b82786ca145.png")
     
     class ConfigView(discord.ui.View):
         def __init__(self):
-            super().__init__()
+            super().__init__(timeout=300)
         
-        @discord.ui.button(label="Activer", style=discord.ButtonStyle.green, disabled=creator_config["enabled"])
+        @discord.ui.button(label="Activer", style=discord.ButtonStyle.green, emoji="✅", disabled=creator_config["enabled"], row=0)
         async def enable_button(self, interaction: discord.Interaction, button: discord.ui.Button):
             config[platform][creator]["enabled"] = True
             save_config(config)
+            
+            success_embed = discord.Embed(
+                title="✅ Notification activée",
+                description=f"Les notifications pour **{creator}** sont maintenant **activées**.",
+                color=discord.Color.green()
+            )
+            await interaction.response.send_message(embed=success_embed, ephemeral=True)
+            
             await show_creator_config(interaction, platform, creator)
         
-        @discord.ui.button(label="Désactiver", style=discord.ButtonStyle.red, disabled=not creator_config["enabled"])
+        @discord.ui.button(label="Désactiver", style=discord.ButtonStyle.red, emoji="❌", disabled=not creator_config["enabled"], row=0)
         async def disable_button(self, interaction: discord.Interaction, button: discord.ui.Button):
             config[platform][creator]["enabled"] = False
             save_config(config)
+            
+            success_embed = discord.Embed(
+                title="❌ Notification désactivée",
+                description=f"Les notifications pour **{creator}** sont maintenant **désactivées**.",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=success_embed, ephemeral=True)
+            
             await show_creator_config(interaction, platform, creator)
         
-        @discord.ui.button(label="Configurer message", style=discord.ButtonStyle.blurple)
+        @discord.ui.button(label="Message", style=discord.ButtonStyle.blurple, emoji="💬", row=1)
         async def message_button(self, interaction: discord.Interaction, button: discord.ui.Button):
             # Create a modal for message input
-            class MessageModal(discord.ui.Modal, title=f"Message pour {creator}"):
-                message_input = discord.ui.TextInput(
-                    label="Message de notification",
-                    placeholder="Exemple: {user} est en live sur {game} ! {link}",
-                    default=creator_config["message"],
-                    style=discord.TextStyle.paragraph
-                )
+            class MessageModal(discord.ui.Modal):
+                def __init__(self):
+                    super().__init__(title=f"Message pour {creator}")
+                    
+                    self.message_input = discord.ui.TextInput(
+                        label="Message de notification",
+                        placeholder=get_platform_placeholder(platform),
+                        default=creator_config["message"],
+                        style=discord.TextStyle.paragraph,
+                        required=True,
+                        max_length=1000
+                    )
+                    self.add_item(self.message_input)
                 
                 async def on_submit(self, interaction: discord.Interaction):
                     config[platform][creator]["message"] = self.message_input.value
                     save_config(config)
-                    await interaction.response.send_message("Message configuré avec succès !", ephemeral=True)
+                    
+                    success_embed = discord.Embed(
+                        title="✅ Message configuré",
+                        description=f"Le message de notification pour **{creator}** a été mis à jour.",
+                        color=discord.Color.green()
+                    )
+                    success_embed.add_field(
+                        name="Nouveau message",
+                        value=f"```\n{self.message_input.value}\n```",
+                        inline=False
+                    )
+                    
+                    await interaction.response.send_message(embed=success_embed, ephemeral=True)
                     await show_creator_config(interaction, platform, creator)
             
             await interaction.response.send_modal(MessageModal())
         
-        @discord.ui.button(label="Choisir salon", style=discord.ButtonStyle.blurple)
+        @discord.ui.button(label="Salon", style=discord.ButtonStyle.blurple, emoji="📢", row=1)
         async def channel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-            class ChannelSelect(discord.ui.ChannelSelect):
+            class ChannelSelectView(discord.ui.View):
                 def __init__(self):
-                    super().__init__(channel_types=[discord.ChannelType.text], placeholder="Sélectionner un salon texte")
+                    super().__init__(timeout=180)
+                    
+                    # Add channel select
+                    self.channel_select = discord.ui.ChannelSelect(
+                        placeholder="Sélectionner un salon texte",
+                        channel_types=[discord.ChannelType.text],
+                        min_values=1,
+                        max_values=1
+                    )
+                    self.channel_select.callback = self.channel_select_callback
+                    self.add_item(self.channel_select)
                 
-                async def callback(self, interaction: discord.Interaction):
-                    selected_channel = self.values[0]
+                async def channel_select_callback(self, interaction: discord.Interaction):
+                    selected_channel = self.channel_select.values[0]
                     config[platform][creator]["channel_id"] = str(selected_channel.id)
                     save_config(config)
-                    await interaction.response.send_message(f"Salon configuré: {selected_channel.mention}", ephemeral=True)
+                    
+                    success_embed = discord.Embed(
+                        title="✅ Salon configuré",
+                        description=f"Les notifications pour **{creator}** seront envoyées dans {selected_channel.mention}.",
+                        color=discord.Color.green()
+                    )
+                    
+                    await interaction.response.send_message(embed=success_embed, ephemeral=True)
                     await show_creator_config(interaction, platform, creator)
             
-            view = discord.ui.View()
-            view.add_item(ChannelSelect())
-            await interaction.response.send_message("Choisissez un salon:", view=view, ephemeral=True)
+            channel_embed = discord.Embed(
+                title=f"Sélection de salon pour {creator}",
+                description="Choisissez le salon où les notifications seront envoyées",
+                color=get_platform_color(platform)
+            )
+            
+            await interaction.response.send_message(embed=channel_embed, view=ChannelSelectView(), ephemeral=True)
         
-        @discord.ui.button(label="Configurer ping", style=discord.ButtonStyle.blurple)
+        @discord.ui.button(label="Ping", style=discord.ButtonStyle.blurple, emoji="🔔", row=1)
         async def ping_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-            class PingModal(discord.ui.Modal, title=f"Ping pour {creator}"):
-                ping_input = discord.ui.TextInput(
-                    label="Ping (laissez vide pour désactiver)",
-                    placeholder="Exemples: @everyone, @here, ou <@&role_id>",
-                    default=creator_config["ping"],
-                    required=False
-                )
+            class PingModal(discord.ui.Modal):
+                def __init__(self):
+                    super().__init__(title=f"Ping pour {creator}")
+                    
+                    self.ping_input = discord.ui.TextInput(
+                        label="Ping pour les notifications",
+                        placeholder="Exemples: @everyone, @here, ou <@&role_id>",
+                        default=creator_config["ping"],
+                        required=False
+                    )
+                    self.add_item(self.ping_input)
                 
                 async def on_submit(self, interaction: discord.Interaction):
                     config[platform][creator]["ping"] = self.ping_input.value
                     save_config(config)
-                    await interaction.response.send_message("Ping configuré avec succès !", ephemeral=True)
+                    
+                    # Create success feedback
+                    if self.ping_input.value.strip():
+                        desc = f"Les notifications pour **{creator}** mentionneront maintenant **{self.ping_input.value}**."
+                    else:
+                        desc = f"Les notifications pour **{creator}** n'incluront plus de mentions."
+                    
+                    success_embed = discord.Embed(
+                        title="✅ Ping configuré",
+                        description=desc,
+                        color=discord.Color.green()
+                    )
+                    
+                    await interaction.response.send_message(embed=success_embed, ephemeral=True)
                     await show_creator_config(interaction, platform, creator)
             
             await interaction.response.send_modal(PingModal())
+        
+        @discord.ui.button(label="Supprimer", style=discord.ButtonStyle.danger, emoji="🗑️", row=2)
+        async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            # Create confirmation view
+            class ConfirmView(discord.ui.View):
+                def __init__(self):
+                    super().__init__(timeout=60)
+                
+                @discord.ui.button(label="Confirmer", style=discord.ButtonStyle.danger, emoji="✅")
+                async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    del config[platform][creator]
+                    save_config(config)
+                    
+                    success_embed = discord.Embed(
+                        title="🗑️ Créateur supprimé",
+                        description=f"Le créateur **{creator}** a été supprimé des notifications {platform}.",
+                        color=discord.Color.red()
+                    )
+                    
+                    await interaction.response.send_message(embed=success_embed, ephemeral=True)
+                    
+                    # Return to platform config
+                    embed = discord.Embed(
+                        title=f"Configuration de {platform}",
+                        description="Le créateur a été supprimé. Utilisez `/config {platform}` pour revenir à la liste des créateurs.",
+                        color=get_platform_color(platform)
+                    )
+                    
+                    # Update the original message
+                    await interaction.message.edit(embed=embed, view=None)
+                
+                @discord.ui.button(label="Annuler", style=discord.ButtonStyle.secondary, emoji="❌")
+                async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    cancel_embed = discord.Embed(
+                        title="⚠️ Suppression annulée",
+                        description=f"La suppression du créateur **{creator}** a été annulée.",
+                        color=discord.Color.blurple()
+                    )
+                    
+                    await interaction.response.send_message(embed=cancel_embed, ephemeral=True)
+            
+            confirm_embed = discord.Embed(
+                title="⚠️ Confirmation de suppression",
+                description=f"Êtes-vous sûr de vouloir supprimer le créateur **{creator}** de vos notifications {platform} ?",
+                color=discord.Color.orange()
+            )
+            confirm_embed.add_field(
+                name="⚠️ Cette action est irréversible",
+                value="Vous devrez reconfigurer ce créateur s'il est supprimé.",
+                inline=False
+            )
+            
+            await interaction.response.send_message(embed=confirm_embed, view=ConfirmView(), ephemeral=True)
+            
+        @discord.ui.button(label="Retour", style=discord.ButtonStyle.secondary, emoji="◀️", row=2)
+        async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            # Go back to platform config
+            await config_command(interaction, platform)
     
     await interaction.response.edit_message(embed=embed, view=ConfigView())
+
+@bot.tree.command(name="add_creator", description="Ajoute un nouveau créateur à suivre pour les notifications")
+@app_commands.describe(
+    platform="Plateforme du créateur (twitch, youtube, tiktok)",
+    username="Nom d'utilisateur du créateur sur la plateforme"
+)
+@app_commands.choices(platform=[
+    app_commands.Choice(name="Twitch", value="twitch"),
+    app_commands.Choice(name="YouTube", value="youtube"),
+    app_commands.Choice(name="TikTok", value="tiktok")
+])
+async def add_creator_command(interaction: discord.Interaction, platform: str, username: str):
+    """Add a new creator to track for notifications"""
+    # Check if user has admin permissions
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="❌ Permission refusée",
+                description="Vous devez être administrateur pour utiliser cette commande.",
+                color=discord.Color.red()
+            ),
+            ephemeral=True
+        )
+        return
+    
+    # Load config
+    config = load_config()
+    
+    # Initialize platform if needed
+    if platform not in config:
+        config[platform] = {}
+    
+    # Clean username
+    username = username.strip()
+    
+    # Check if creator already exists
+    if username in config[platform]:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="❌ Créateur existant",
+                description=f"Le créateur **{username}** existe déjà pour {platform}.",
+                color=discord.Color.red()
+            ),
+            ephemeral=True
+        )
+        return
+    
+    # Add creator with default settings
+    config[platform][username] = {
+        "enabled": True,
+        "message": get_platform_default_message(platform),
+        "channel_id": None,
+        "ping": ""
+    }
+    save_config(config)
+    
+    # Create success embed
+    embed = discord.Embed(
+        title=f"✅ {get_platform_emoji(platform)} Créateur ajouté avec succès",
+        description=f"**{username}** a été ajouté à vos notifications {platform}.",
+        color=get_platform_color(platform)
+    )
+    
+    embed.add_field(
+        name="🔶 Message par défaut",
+        value=f"```\n{get_platform_default_message(platform)}\n```",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚙️ Configuration",
+        value=f"Utilisez `/config {platform}` puis sélectionnez le créateur pour configurer les détails (salon, ping, message).",
+        inline=False
+    )
+    
+    # Show appropriate thumbnail
+    if platform == "twitch":
+        embed.set_thumbnail(url="https://brand.twitch.tv/assets/logos/svg/glitch/purple.svg")
+    elif platform == "youtube":
+        embed.set_thumbnail(url="https://www.youtube.com/s/desktop/b182fc95/img/favicon_144x144.png")
+    elif platform == "tiktok":
+        embed.set_thumbnail(url="https://sf16-scmcdn-sg.ibytedtos.com/goofy/tiktok/web/node/_next/static/images/logo-big-edd8395913a7d4b3b8b93b82786ca145.png")
+    
+    # Create a button to directly go to config
+    class ConfigNowView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=180)
+        
+        @discord.ui.button(label="Configurer maintenant", style=discord.ButtonStyle.primary, emoji="⚙️")
+        async def config_now(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await show_creator_config(interaction, platform, username)
+    
+    await interaction.response.send_message(embed=embed, view=ConfigNowView(), ephemeral=False)
 
 @bot.tree.command(name="rank", description="Affiche ton niveau et ton XP")
 async def rank_command(interaction: discord.Interaction):
