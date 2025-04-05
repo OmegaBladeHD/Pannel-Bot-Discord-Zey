@@ -1,0 +1,38 @@
+{
+  "tiktok": {
+    "tayomi_20": {
+      "enabled": true,
+      "message": "{user} a posté un TikTok ! {link}",
+      "channel_id": null,
+      "ping": ""
+    },
+    "1gars.random": {
+      "enabled": true,
+      "message": "{user} a posté un TikTok ! {link}",
+      "channel_id": null,
+      "ping": ""
+    }
+  },
+  "youtube": {
+    "zeyphir_officiel": {
+      "enabled": true,
+      "message": "{user} vient de sortir une nouvelle vidéo YouTube ! {link}",
+      "channel_id": null,
+      "ping": ""
+    }
+  },
+  "twitch": {
+    "zayphir_": {
+      "enabled": true,
+      "message": "{user} est en live sur {game} ! Rejoins ici : {link}",
+      "channel_id": null,
+      "ping": ""
+    },
+    "tayomi20": {
+      "enabled": true,
+      "message": "{user} est en live sur {game} ! Rejoins ici : {link}",
+      "channel_id": null,
+      "ping": ""
+    }
+  }
+}
